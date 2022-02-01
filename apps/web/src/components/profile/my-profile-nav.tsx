@@ -54,6 +54,10 @@ export default function ProfileNav({ screen }: ProfileNavProps) {
       id: urls.myProfileTransactions,
       label: t('common:pageTitles.Transactions'),
     },
+    {
+      id: urls.myProfileImportNFT,
+      label: t('common:pageTitles.Import NFT'),
+    },
   ]
 
   return (

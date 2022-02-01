@@ -171,7 +171,7 @@ export default class AlgorandAdapter {
 
   async submitTransaction(transaction: Uint8Array | Uint8Array[]) {
     try {
-      await this.algod.sendRawTransaction(transaction).do()
+      return await this.algod.sendRawTransaction(transaction).do()
     } catch (error) {
       this.logger.error(error as Error)
       throw error
@@ -279,7 +279,12 @@ export default class AlgorandAdapter {
         numByteSlices: info['apps-total-schema']?.['num-byte-slice'] || 0,
         numInts: info['apps-total-schema']?.['num-uint'] || 0,
       },
-      assets: info['assets'] || [],
+      assets: (info['assets'] || []).map((asset) => ({
+        assetId: asset['asset-id'],
+        amount: asset['amount'],
+        creator: asset['creator'],
+        isFrozen: asset['is-frozen'],
+      })),
       authAddr: info['auth-addr'],
       createdApps: info['created-apps'] || [],
       createdAssets: info['created-assets'] || [],
@@ -612,13 +617,13 @@ export default class AlgorandAdapter {
     const transactions: algosdk.Transaction[] = []
     const suggestedParams = await this.algod.getTransactionParams().do()
     const signers: string[] = []
-    const transactionIds: string[] = []
 
     if (
       !accountInfo.assets.some((asset) => asset.assetId === options.assetIndex)
     ) {
       // This account has not opted in to this asset
-      let minBalanceIncrease = 100_000
+      // 0.1 Algo for opt-in, 1000 microAlgos for txn fee
+      let minBalanceIncrease = 100_000 + 1000
 
       if (accountInfo.amount === 0) {
         // this is a brand new account, need to send additional funds
@@ -626,6 +631,7 @@ export default class AlgorandAdapter {
       }
 
       // Send funds to cover asset min balance increase
+      // Signed by the funding account
       const fundsTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
         suggestedParams,
         amount: minBalanceIncrease,
@@ -634,6 +640,7 @@ export default class AlgorandAdapter {
       })
 
       // Opt-in to asset
+      // Signed by the user's custodial account
       const optInAssetTxn =
         algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
           suggestedParams,
@@ -645,10 +652,10 @@ export default class AlgorandAdapter {
 
       signers.push(this.fundingAccount.addr, options.toAccountAddress)
       transactions.push(fundsTxn, optInAssetTxn)
-      transactionIds.push(fundsTxn.txID(), optInAssetTxn.txID())
     }
 
     // Transfer asset to recipient and remove opt-in from sender
+    // This transaction will be signed by the non-custodial account
     const transferAssetTxn =
       algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
         suggestedParams,
@@ -661,7 +668,6 @@ export default class AlgorandAdapter {
 
     signers.push(options.fromAccountAddress)
     transactions.push(transferAssetTxn)
-    transactionIds.push(transferAssetTxn.txID())
 
     algosdk.assignGroupID(transactions)
 
@@ -670,7 +676,7 @@ export default class AlgorandAdapter {
         txn: Buffer.from(algosdk.encodeUnsignedTransaction(txn)).toString(
           'base64'
         ),
-        txnId: transactionIds[index],
+        txnId: txn.txID(),
         signer: signers[index],
       }
     })
